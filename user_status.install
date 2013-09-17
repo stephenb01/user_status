@@ -1,0 +1,159 @@
+<?php
+/**
+ * @file
+ * Install, update and uninstall functions for the user status module.
+ */
+
+/**
+ * Implements hook_install().
+ * 
+ * Add records to the created tables
+ *
+ */
+function user_status_install() {
+
+  // Adding several entries for the status
+  // Add a default entry.
+  $fields = array(
+    'name'    => 'in office',
+  );
+  
+  db_insert('user_status')
+    ->fields($fields)
+    ->execute();
+
+  // Add another entry.
+  $fields = array(
+    'name'    => 'in meeting',
+  );
+  
+  db_insert('user_status')
+    ->fields($fields)
+    ->execute();
+  
+  $fields = array(
+    'name'    => 'busy',
+  );
+  
+  db_insert('user_status')
+    ->fields($fields)
+    ->execute();
+
+}
+
+/**
+ * Implements hook_uninstall().
+ * 
+ * @see hook_uninstall()
+ * 
+ */
+function user_status_uninstall() {
+  // nothing.
+}
+
+
+/**
+ * Implements hook_schema().
+ *
+ * Defines the database tables used by this module.
+ *
+ * @see hook_schema()
+ * @ingroup dbtng_example
+ */
+function user_status_schema() {
+  
+  // Table to record the site wide status to be used.
+  $schema['user_status_default'] = array(
+    'description' => 'Stores the system default for the user status',
+    'fields' => array( 
+      'id'  => array(
+        'type' => 'serial',
+        'not null' => TRUE,
+        'description' => 'Primary Key: Unique status ID.',
+      ),  
+        // ID of the status we want to use.
+      'sid' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "User status default ID",
+      ),  
+    ),
+    'primary key' => array('id'),
+    'indexes' => array(
+      'user_status_default_sid'    => array('sid'),
+    ),      
+  );
+  
+  // Holds the list of different status options which can be used for the site
+  //  wide setting.
+  $schema['user_status'] = array(
+    'description' => 'Stores list of options for user status',
+    'fields' => array(
+      'sid'  => array(
+        'type' => 'serial',
+        'not null' => TRUE,
+        'description' => 'Primary Key: Unique status ID.',
+      ),
+        // Name of the status
+      'name' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+        'description' => 'Status type.',
+      ),
+    ),
+    'primary key' => array('sid'),
+    'indexes' => array(
+      'user_status_name'    => array('name'),
+    ),
+  );
+
+  // Hold the history of changes for each user
+  $schema['user_status_history'] = array(
+    'description' => 'Stores history of the user status',
+    'fields' => array(
+      'hid'  => array(
+        'type' => 'serial',
+        'not null' => TRUE,
+        'description' => 'Primary Key: History ID.',
+      ),
+        // ID of the user
+      'uid' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => "User's {users}.uid",
+      ),     
+        // The status ID currently set as global.
+      'sid' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Status id.',
+      ),
+        // Whether this is active or not.
+      'active' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'default' => 0,
+        'description' => 'Is the status active.',
+      ), 
+        // The date when the status was changed.
+      'changed' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+        'description' => 'Records when the status was changed.',
+      ),        
+    ),
+    'primary key' => array('hid'),
+    'indexes' => array(
+      'user_status_history_uid'    => array('uid'),
+      'user_status_history_sid'    => array('sid'),
+      'user_status_history_changed'=> array('changed'),
+    ),
+  );  
+  
+  return $schema;
+}

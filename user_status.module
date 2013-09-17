@@ -1,0 +1,429 @@
+<?PHP
+
+
+/**
+ * @file
+ * This holds the specific functions for user status module.
+ */
+ 
+
+/**
+ * Custom access callback for taxonomy/term/%.
+ *
+ * Hide the vocabulary created by Workbench Access unless the
+ * user has specific permission to view these pages.
+ *
+ * @param 
+ *   The taxonomy term being viewed.
+ *
+ * @return
+ *   Array of menu items to be added to Drupal's menu system.
+ */
+function user_status_menu() {
+
+  $items = array();
+
+  $items['admin/config/user_status'] = array(
+    'title' => 'User status',
+    'description' => 'Sets the default user status',
+    'position' => 'left',
+    'weight' => -100,
+    'page callback' => 'system_admin_menu_block_page',
+    'access arguments' => array('administer site configuration'),
+    'file' => 'system.admin.inc',
+    'file path' => drupal_get_path('module', 'system'),
+  );
+
+  
+  $items['admin/config/user_status/settings'] = array(
+    'title' => t('Settings'),
+    'page callback' => 'user_status_settings',
+    'access arguments' => array('administer site configuration'),
+    'file' => 'user_status_setup.inc',
+  );
+  
+  return $items;
+}
+
+
+/**
+ * Implements hook_permission().
+ *
+ * We want to let site administrators figure out who should
+ * be able to view, edit, and administer our field.
+ *
+ * Field permission operations can only be view or edit, in the
+ * context of one's own content or that of others. Constrast
+ * with content types where we also have to worry about who can
+ * create or delete content.
+ */
+function user_status_permission() {
+  // Note: This would be very easy to generate programatically,
+  // but it's all typed out here for clarity.
+  // The key text is the machine name of the permission.
+  $perms['view own user status'] = array('title' => t('View own user status'));
+  $perms['edit own user status'] = array('title' => t('Edit own user status'));
+  $perms['view any user status'] = array('title' => t('View any user status'));
+  $perms['edit any user status'] = array('title' => t('Edit any user status'));
+
+  return $perms;
+}
+
+/**
+ * Implements hook_block_info().
+ *
+ * Declare a block for showing a table of user status history.
+ *
+ * @param 
+ *   none
+ *
+ * @return
+ *   Array of block items.
+ */
+function user_status_block_info() {
+  // I've onlhy added minimal block setting here.
+  // Will need to come back and modify once it is clear what the requirements 
+  // are.
+  $blocks['user_status_history'] = array(
+    'info' => t('History of status changes'),
+  );   
+
+  return $blocks;
+}
+
+
+/**
+ * Implements hook_block_view().
+ *
+ * This hook generates the contents of the blocks themselves.
+  *
+ * Declare a block for showing a table of user status history.
+ *
+ * @param 
+ *   $delta - System name of the block being viewed.
+ *
+ * @return
+ *   Array of block items. 
+ */
+function user_status_block_view($delta = '') {
+  //The $delta parameter tells us which block is being requested.
+  $block = array();
+  
+  switch ($delta) {
+    case 'user_status_history':
+      $block['subject'] = t('Status history');
+      $block['content'] = block_contents($delta); // Get the block contents.
+      break;
+  }
+  return $block;
+}
+
+
+/**
+ * Get the contents of the specified block.
+ *
+ * @param 
+ *   $which_block - System name of the block being viewed.
+ *
+ * @return
+ *   Array containing the contents of the block.
+ */
+function block_contents($which_block) {
+  switch ($which_block) {
+    case 'user_status_history':
+      // Get the history of the user's status.
+      $output['history'] = user_status_history();
+      
+      return $output;
+      break;
+    
+    default:
+      return;
+  }
+}
+
+/**
+ * Get the history of the user's status and return it in a table.
+ *
+ * @param 
+ *   none
+ *
+ * @return
+ *   A table array listing the history of the user's status. 
+ */
+function user_status_history() {
+
+  // At present I'm using the logged on user. But we may want to pass the
+  // user id from the current profile so we can display the correct history.
+  global $user;
+  
+  if (empty($user->uid)) {
+    // No user ID 
+    return ;
+  }
+  
+  // Set the headers for the table.
+  $header = array(
+    array('data' => t('Date')),
+    array('data' => t('Status')),
+  );
+ 
+  // Search the DB for the history.
+  $select = db_select('user_status_history', 'h');
+  $select->join('user_status','us','us.sid=h.sid');
+  $select->fields('h', array('changed','active'));
+  $select->fields('us',array('name'));
+
+  $select->condition('h.uid ', $user->uid, '=');
+  // Only get the first 10 rows
+  $select->range(0, 10); 
+  $result = $select
+      ->orderBy('h.changed','DESC')
+      ->execute();
+
+  $rows = array();
+  // Now process the results
+  foreach ($result as $row) {
+    $row_array = array();
+    
+    // Format the date the status changed
+    $row_array['created'] = date('d M y h:m:s',$row->changed);
+    
+    if($row->active == 0) {
+      $row_array['status'] = 'not ' . $row->name;    
+    } else {
+      $row_array['status'] = $row->name;     
+    }
+    
+    $rows[] = array('data' => (array) $row_array);
+  
+  }
+
+  // Create a render array ($build) which will be themed as a table
+  $output['table'] = array(
+    '#theme' => 'table',
+    '#header' => $header,
+    '#rows' => $rows,
+    '#empty' => t('No status history.'),
+  );
+
+  return $output;
+}
+
+
+/**
+ * We add the status to the user profile and allow them to change the state.
+ *
+ * @param 
+ *   $build
+ *
+ * @return
+ *   none
+ */
+function user_status_user_view_alter(&$build) {
+
+  // Want to keep the profile information together.
+  $build['user_status'] = array(
+    '#type' => 'container',
+      '#attributes' => array(
+        'class' => array(
+              'in-line'
+            ),  
+      ),
+  );
+
+  // We get the current status of the user.
+  $status = _get_current_status($build['#account']->uid);
+
+  if (empty($status)) {
+    $message = 'No current status set for ' . $build['#account']->name;
+  } else {
+    $message = $build['#account']->name . ' is currently ' . $status['name'];
+  }
+  
+  // Show the current status
+  $build['user_status']['field_user_status'] = array(
+      '#markup' => t($message),  
+      '#access' => TRUE,
+      '#weight' => 10,
+  );
+  
+  
+  $uid =  $build['#account']->uid;
+  if (isset($status['active'])) {
+    $active = $status['active'];
+  } else {
+    $active = 0;
+  }
+
+  // Get a form where the user can switch between status.
+  $build['user_status']['change_status_form'] = drupal_get_form('_change_form',$uid,$active);
+  $build['user_status']['change_status_form']['#weight'] = '15';
+
+}
+
+
+/**
+ * Get hte current status of the user.
+ *
+ * @param 
+ *   $uid - The id of the user.
+ *
+ * @return
+ *   Current status of the user.
+ */
+function _get_current_status($uid) {
+  if (!isset($uid)) {
+    return '';
+  }
+  
+  // We only need the latest state so we order the items according to the 
+  // date and just select the top one.
+  $query = db_select('user_status_history','h');
+  $query->join('user_status','s','s.sid=h.sid');
+  $query->condition('h.uid',$uid,'=');
+  $query->fields('h',array('changed','active'));
+  $query->fields('s',array('name'));
+  
+  $query->orderBy('h.changed','DESC');
+  $query->range(0,1);
+  $status = array();
+  
+  $result = $query->execute();
+  foreach($result as $row) {
+    if ($row->active == 0) {
+      $status['name'] = 'not ' . $row->name;     
+    } else {
+      $status['name'] =  $row->name;     
+    }
+    $status['active'] = $row->active;
+  }
+  return $status;
+}
+
+/**
+ * Implements hook_block_view().
+ *
+ * This hook generates the contents of the blocks themselves.
+  *
+ * Declare a block for showing a table of user status history.
+ *
+ * @param 
+ *   $which_block - System name of the block being viewed.
+ *
+ * @return
+ *   none
+ */
+function _user_status_change_submit($form, &$form_state) {
+  $active = $form_state['values']['active'];
+  $uid = $form_state['values']['uid'];
+  _user_status_change_insert($uid,$active);
+}
+
+
+/**
+ * Form to allow the user to change the status.
+ *
+ * @param 
+ *   $uid - User ID
+ *   $active - current status
+ *
+ * @return
+ *   Form array.
+ */
+function _change_form($form, &$form_state, $uid, $active) {
+
+  $form = array();
+
+  // Remember the user's ID for when we submit the form
+  $form['uid'] = array(
+    '#type' => 'hidden',
+    '#value' => $uid,
+  );
+
+  // we also need to remember the status
+  $form['active'] = array(
+    '#type' => 'hidden',
+    '#value' => $active,
+  );
+  
+  $form['action']['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Change status'),
+    '#submit' => array('_user_status_change_submit'),  
+  );
+
+  return $form;
+}
+
+
+/**
+ * Update the user's status and record it inhte history.
+ *
+ * @param 
+ *   $uid - User ID
+ *   $active - current status
+ *
+ * @return
+ *   
+ */
+function _user_status_change_insert($uid,$active) {
+
+  if ($active == 1) {
+    $active = 0;
+  } else {
+    $active = 1;
+  }
+  
+  // Get the ID of the status description
+  $status_id = _get_global_user_status_id();
+
+  $fields = array(
+    'sid'    => $status_id,
+    'uid'    => $uid,
+    'active' => $active,
+    'changed'=> time(),
+  );
+
+  $return_value = NULL;
+  try {
+    $return_value = db_insert('user_status_history')
+                    ->fields($fields)
+                    ->execute();
+  }
+  catch (Exception $e) {
+    drupal_set_message(t('db_insert failed. Message = %message, query= %query',
+      array('%message' => $e->getMessage(), '%query' => $e->query_string)), 'error');
+  }
+
+  // Probably should show a drupal message telling the user the status has changed.
+  return $return_value;
+}
+
+/**
+ * Get the ID of the site wide status
+ *
+ * @param 
+ *   none
+ *
+ * @return
+ *   The status ID.
+ */
+function  _get_global_user_status_id() {
+  
+  $query = db_select('user_status_default','s');
+  $query->fields('s', array('sid'));
+  
+  $query->orderBy('s.id','DESC');
+  $query->range(0,1);
+  
+  $result = $query->execute();
+  
+  $status_id = '';
+  
+  foreach($result as $row) {
+    $status_id = $row->sid;
+  }
+  
+  return $status_id;
+}

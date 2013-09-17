@@ -1,0 +1,5 @@
+name = User status
+description = Adds a status field to the user profile and keeps track of its history.
+package = User status
+
+core = 7.x
